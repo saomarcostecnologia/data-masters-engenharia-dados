@@ -1,0 +1,63 @@
+# Ambiente Virtual
+venv/
+env/
+.env
+
+# Cache Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribuição/Empacotamento
+dist/
+build/
+*.egg-info/
+
+# Testes
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# IDEs e Editores
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Arquivos temporários
+tmp/
+temp/
+
+# Arquivos de dados
+*.csv
+*.parquet
+*.xlsx
+*.xls
+*.json
+
+# Arquivos de segurança
+*.pem
+*.key
+*.crt
+
+# Arquivos de ambiente local
+.env.local
+.env.*.local
+.env.development
+.env.test
+.env.production
+
+# Arquivos de cache Jupyter
+.ipynb_checkpoints/
+
+# Arquivos específicos do projeto
+data/
+output/
+results/
