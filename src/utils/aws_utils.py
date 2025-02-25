@@ -2,7 +2,7 @@
 import boto3
 import logging
 from botocore.exceptions import ClientError
-from typing import Any, Optional
+from typing import Any, Optional, List
 import pandas as pd
 from io import StringIO, BytesIO
 import os
@@ -85,19 +85,28 @@ class S3Handler:
     def download_file(
         self,
         file_path: str,
-        format: str = 'parquet'
+        format: str = None
     ) -> Optional[pd.DataFrame]:
         """
         Baixa arquivo do S3 e retorna como DataFrame.
         
         Args:
             file_path: Caminho completo do arquivo no S3 (incluindo camada)
-            format: Formato do arquivo
+            format: Formato do arquivo (inferido da extensão se None)
             
         Returns:
             Optional[pd.DataFrame]: DataFrame ou None se houver erro
         """
         try:
+            # Infere o formato do arquivo se não for especificado
+            if format is None:
+                if file_path.endswith('.parquet'):
+                    format = 'parquet'
+                elif file_path.endswith('.csv'):
+                    format = 'csv'
+                else:
+                    format = 'parquet'  # default
+            
             response = self.s3_client.get_object(
                 Bucket=self.bucket_name,
                 Key=file_path
@@ -114,7 +123,7 @@ class S3Handler:
             logging.error(f"Erro ao baixar arquivo do S3 ({file_path}): {str(e)}")
             return None
 
-    def list_files(self, prefix: str = '') -> list:
+    def list_files(self, prefix: str = '') -> List[str]:
         """
         Lista arquivos no bucket S3.
         
