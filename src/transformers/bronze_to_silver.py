@@ -6,7 +6,10 @@ from typing import Dict, List, Optional, Union
 import os
 from dotenv import load_dotenv
 
+# Import da classe S3Handler
 from ..utils.aws_utils import S3Handler
+
+# Import dos helpers (assumindo que __init__.py está configurado para exportar tudo)
 from ..utils.helpers import (
     # Data Cleaning
     inspect_dataframe, safe_rename_columns, identify_value_column, ensure_numeric,

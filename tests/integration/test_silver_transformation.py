@@ -1,17 +1,16 @@
 # tests/integration/test_silver_transformation.py
 import sys
 import os
-import logging
 import pandas as pd
-from datetime import datetime, timedelta
 from pathlib import Path
 
-# Adiciona o diretório raiz ao path para importar módulos do projeto
+# Adiciona o diretório raiz ao path
 project_root = str(Path(__file__).parent.parent.parent)
 sys.path.append(project_root)
 
+# Agora usa imports absolutos
 from src.transformers.bronze_to_silver import EconomicIndicatorTransformer
-from src.utils.helpers import (
+from src.utils.helpers.logging_utils import (
     get_logger, 
     log_execution_time,
     log_dataframe_stats
