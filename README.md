@@ -80,3 +80,23 @@ Contribuições são bem-vindas! Por favor, leia as diretrizes de contribuição
 
 ## 📝 Licença
 Este projeto está sob a licença MIT.
+
+
+Copy# Economic Indicators ETL
+
+## 📊 Sobre o Projeto
+Pipeline de dados para coleta, processamento e análise de indicadores econômicos, utilizando arquitetura em camadas (Lakehouse) com AWS S3.
+
+## 🚀 Como Começar
+
+### Pré-requisitos
+- Python 3.11+
+- Conta AWS e credenciais configuradas (AWS CLI ou variáveis de ambiente)
+- Pip (gerenciador de pacotes Python)
+
+### Instalação
+
+1. Clone o repositório
+```bash
+git clone https://github.com/seu-usuario/economic-indicators-etl.git
+cd economic-indicators-etl
