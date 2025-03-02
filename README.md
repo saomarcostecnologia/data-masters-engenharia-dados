@@ -1,4 +1,4 @@
-# Economic Indicators ETL Pipeline
+# Economic Indicators ETL Pipeline MPV
 
 ## 📊 Sobre o Projeto
 Pipeline de dados para coleta, processamento e análise de indicadores econômicos brasileiros, utilizando arquitetura em camadas (Lakehouse) com AWS S3.

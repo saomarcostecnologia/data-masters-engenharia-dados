@@ -1,0 +1,114 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Economic Indicators ETL Pipeline
+  Serverless architecture with Step Functions to orchestrate ETL process
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Deployment environment
+
+  DataLakeBucket:
+    Type: String
+    Default: economic-indicators-data-lake
+    Description: Name of the S3 bucket for the data lake
+
+  NotificationEmail:
+    Type: String
+    Default: ''
+    Description: Email address to receive notifications (optional)
+
+Globals:
+  Function:
+    Timeout: 300
+    MemorySize: 512
+    Runtime: python3.11
+    Environment:
+      Variables:
+        DATA_LAKE_BUCKET: !Ref DataLakeBucket
+        ENVIRONMENT: !Ref Environment
+        LOG_LEVEL: INFO
+    Tracing: Active
+
+Resources:
+  #=========================================================================
+  # S3 Bucket for Data Lake
+  #=========================================================================
+  DataLakeBucketResource:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref DataLakeBucket
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: BronzeTransition
+            Status: Enabled
+            Prefix: bronze/
+            Transitions:
+              - TransitionInDays: 90
+                StorageClass: STANDARD_IA
+          - Id: SilverTransition
+            Status: Enabled
+            Prefix: silver/
+            Transitions:
+              - TransitionInDays: 90
+                StorageClass: STANDARD_IA
+          - Id: GoldTransition
+            Status: Enabled
+            Prefix: gold/
+            Transitions:
+              - TransitionInDays: 90
+                StorageClass: STANDARD_IA
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: economic-indicators-etl
+
+  #=========================================================================
+  # SNS Topic for Notifications
+  #=========================================================================
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub economic-indicators-notifications-${Environment}
+      DisplayName: Economic Indicators ETL Notifications
+
+  # Email subscription (if provided)
+  NotificationSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasNotificationEmail
+    Properties:
+      TopicArn: !Ref NotificationTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  #=========================================================================
+  # Lambda Functions
+  #=========================================================================
+  CollectDataFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub economic-indicators-collect-data-${Environment}
+      CodeUri: ../lambda/collect_data/
+      Handler: lambda_handler.handler
+      Description: Collects economic data from various sources
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref DataLakeBucket
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt NotificationTopic.TopicName
+      Tags:
+        Environment: !Ref Environment
+
+  ValidateDataFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !
