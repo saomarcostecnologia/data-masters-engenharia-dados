@@ -33,18 +33,7 @@ from .math_utils import (
     calculate_financial_metrics
 )
 
-from .aws_helpers import (
-    get_s3_client,
-    list_s3_files,
-    get_latest_s3_file,
-    read_parquet_from_s3,
-    read_csv_from_s3,
-    write_parquet_to_s3,
-    write_csv_to_s3,
-    get_s3_path_with_timestamp,
-    s3_move_file,
-    test_s3_connection
-)
+from ..aws_utils import S3Handler
 
 from .logging_utils import (
     setup_logging,
@@ -86,17 +75,8 @@ __all__ = [
     'calculate_volatility',
     'calculate_financial_metrics',
     
-    # AWS Helpers
-    'get_s3_client',
-    'list_s3_files',
-    'get_latest_s3_file',
-    'read_parquet_from_s3',
-    'read_csv_from_s3',
-    'write_parquet_to_s3',
-    'write_csv_to_s3',
-    'get_s3_path_with_timestamp',
-    's3_move_file',
-    'test_s3_connection',
+    # AWS Utils (direcionado para usar S3Handler agora)
+    'S3Handler',
     
     # Logging Utils
     'setup_logging',

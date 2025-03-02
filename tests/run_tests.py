@@ -19,6 +19,10 @@ import subprocess
 import sys
 import os
 
+# Adiciona o diretório raiz do projeto ao PYTHONPATH para resolver o problema da importação do 'src'
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, project_root)
+
 def run_tests(unit=True, integration=True, coverage=False, verbose=False, html=False):
     """
     Executa os testes especificados.
@@ -34,7 +38,7 @@ def run_tests(unit=True, integration=True, coverage=False, verbose=False, html=F
         int: Código de saída (0 = sucesso)
     """
     # Comando base
-    cmd = ["pytest"]
+    cmd = [sys.executable, "-m", "pytest"]
     
     # Adiciona opções
     if verbose:
@@ -56,9 +60,14 @@ def run_tests(unit=True, integration=True, coverage=False, verbose=False, html=F
     # Adiciona caminhos de teste
     cmd.extend(test_paths)
     
+    # Configura o PYTHONPATH no ambiente para o processo filho
+    env = os.environ.copy()
+    env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
+    
     # Executa testes
     print(f"Executando comando: {' '.join(cmd)}")
-    return subprocess.call(cmd)
+    print(f"PYTHONPATH: {env['PYTHONPATH']}")
+    return subprocess.call(cmd, env=env)
 
 def main():
     """Função principal."""

@@ -9,18 +9,30 @@ from dotenv import load_dotenv
 # Import da classe S3Handler
 from ..utils.aws_utils import S3Handler
 
-s3_handler = S3Handler()
-
-latest_file = s3_handler.get_latest_file(prefix)
-df = s3_handler.read_parquet(key)
-success = s3_handler.write_parquet(df, output_key)
-output_path = s3_handler.get_path_with_timestamp(base_path)
+# Import dos helpers (assumindo que __init__.py está configurado para exportar tudo)
+from ..utils.helpers import (
+    # Data Cleaning
+    inspect_dataframe, safe_rename_columns, identify_value_column, ensure_numeric,
+    
+    # Date Utils
+    standardize_date_column, create_date_features,
+    
+    # Math Utils
+    calculate_variations, calculate_moving_average, calculate_year_to_date,
+    calculate_volatility, calculate_financial_metrics,
+    
+    # Logging Utils
+    get_logger, log_execution_time, log_dataframe_stats, log_process_result
+)
 
 # Carrega variáveis de ambiente
 load_dotenv()
 
 # Configuração de logging
 logger = get_logger("bronze_to_silver")
+
+# Inicializa o handler S3
+s3_handler = S3Handler()
 
 class EconomicIndicatorTransformer:
     """
@@ -341,8 +353,13 @@ class EconomicIndicatorTransformer:
                 return False
             
             # Salva na camada silver
-            file_path = get_s3_path_with_timestamp(f"silver/economic_indicators/{indicator}")
-            success = write_parquet_to_s3(silver_df, self.bucket_name, file_path)
+            file_path = f"silver/economic_indicators/{indicator}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            success = self.s3_handler.upload_dataframe(
+                df=silver_df,
+                file_path=file_path,
+                layer='',  # Vazio porque já incluímos 'silver/' no file_path
+                format='parquet'
+            )
             
             if not success:
                 logger.error(f"Erro ao salvar dados silver para {indicator}")
@@ -356,23 +373,44 @@ class EconomicIndicatorTransformer:
             return False
     
     @log_execution_time(logger=logger, operation_name="Processamento de Todos Indicadores")
-    def process_all_indicators(self) -> Dict[str, bool]:
+    def process_all_indicators(self, indicators: List[str] = None) -> Dict[str, bool]:
         """
         Processa todos os indicadores da camada bronze para silver.
         
+        Args:
+            indicators: Lista de indicadores a processar (se None, tenta descobrir automaticamente)
+            
         Returns:
             Dict[str, bool]: Status de processamento para cada indicador
         """
-        indicators = ['ipca', 'selic', 'pib', 'cambio', 'desemprego']
-        results = {}
+        if indicators is None:
+            # Tenta descobrir indicadores disponíveis
+            available_files = self.s3_handler.list_files(prefix="bronze/economic_indicators")
+            
+            if not available_files:
+                logger.warning("Nenhum arquivo encontrado para processar")
+                return {}
+                
+            # Extrai nomes dos indicadores dos caminhos
+            indicators = set()
+            for file_path in available_files:
+                parts = file_path.split('/')
+                for part in parts:
+                    if '_' in part:
+                        indicator = part.split('_')[0]
+                        indicators.add(indicator)
+            
+            indicators = list(indicators)
+            
+        logger.info(f"Processando indicadores: {indicators}")
         
+        results = {}
         for indicator in indicators:
-            logger.info(f"Iniciando processamento do indicador: {indicator}")
             success = self.process_indicator(indicator)
             results[indicator] = success
             
-            status_txt = "✅ Sucesso" if success else "❌ Falha"
-            logger.info(f"Resultado para {indicator}: {status_txt}")
+            status = "✅ Sucesso" if success else "❌ Falha"
+            logger.info(f"Resultado para {indicator}: {status}")
             
         return results
 

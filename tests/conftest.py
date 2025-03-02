@@ -6,8 +6,9 @@ import pandas as pd
 from datetime import datetime, timedelta
 import boto3
 import logging
-from moto import mock_s3
 from io import BytesIO
+
+import moto
 
 from src.utils.aws_utils import S3Handler
 from src.collectors.bcb_collector import BCBCollector
@@ -43,7 +44,8 @@ def mock_environment():
 @pytest.fixture
 def mock_aws():
     """Mock para serviços AWS."""
-    with mock_s3():
+    # Usamos o decorador mock_s3 da biblioteca moto para simular o S3
+    with moto.mock_s3():
         # Cria bucket de teste
         s3_client = boto3.client(
             's3',
