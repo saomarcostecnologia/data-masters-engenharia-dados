@@ -9,25 +9,12 @@ from dotenv import load_dotenv
 # Import da classe S3Handler
 from ..utils.aws_utils import S3Handler
 
-# Import dos helpers (assumindo que __init__.py está configurado para exportar tudo)
-from ..utils.helpers import (
-    # Data Cleaning
-    inspect_dataframe, safe_rename_columns, identify_value_column, ensure_numeric,
-    
-    # Date Utils
-    standardize_date_column, create_date_features,
-    
-    # Math Utils
-    calculate_variations, calculate_moving_average, calculate_year_to_date,
-    calculate_volatility, calculate_financial_metrics,
-    
-    # AWS Helpers
-    get_latest_s3_file, read_parquet_from_s3, write_parquet_to_s3,
-    get_s3_path_with_timestamp,
-    
-    # Logging Utils
-    get_logger, log_execution_time, log_dataframe_stats, log_process_result
-)
+s3_handler = S3Handler()
+
+latest_file = s3_handler.get_latest_file(prefix)
+df = s3_handler.read_parquet(key)
+success = s3_handler.write_parquet(df, output_key)
+output_path = s3_handler.get_path_with_timestamp(base_path)
 
 # Carrega variáveis de ambiente
 load_dotenv()

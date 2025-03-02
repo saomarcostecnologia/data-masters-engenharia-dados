@@ -65,7 +65,7 @@ def setup_aws_resources(config):
     try:
         # Importa funções de AWS
         sys.path.append(os.path.abspath(os.path.dirname(os.path.dirname(__file__))))
-        from src.utils.helpers.aws_utils import create_s3_client, create_bucket_if_not_exists
+        from src.utils.aws_setup import create_s3_client, create_bucket_if_not_exists, setup_bucket_structure
         
         print("\nConfiguração de recursos AWS")
         print("===========================")
