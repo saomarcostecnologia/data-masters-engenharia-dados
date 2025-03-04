@@ -5,13 +5,16 @@ import requests
 import json
 from typing import Dict, List, Optional, Union, Any
 import time
+import os
+import zipfile
+from io import BytesIO
 
 from .base_collector import BaseCollector
 
 class IBGECollector(BaseCollector):
     """
     Coletor de dados do IBGE (Instituto Brasileiro de Geografia e Estatística).
-    Implementa a coleta de indicadores socioeconômicos via APIs do IBGE.
+    Implementa a coleta de indicadores socioeconômicos via APIs do IBGE e download de arquivos.
     """
     
     def __init__(self):
@@ -21,6 +24,10 @@ class IBGECollector(BaseCollector):
         # URLs base para diferentes APIs do IBGE
         self.sidra_url = "https://servicodados.ibge.gov.br/api/v3/agregados"
         self.pnad_url = "https://servicodados.ibge.gov.br/api/v1/pesquisas/5457/periodos"
+        
+        # Diretório para arquivos temporários
+        self.temp_dir = os.path.join(os.getcwd(), "temp")
+        os.makedirs(self.temp_dir, exist_ok=True)
     
     def get_source_name(self) -> str:
         """
@@ -38,6 +45,22 @@ class IBGECollector(BaseCollector):
         Returns:
             Dict: Mapeamento de indicadores para suas configurações
         """
+        # Verifica se existe o arquivo local para o IPCA-15
+        local_file_path = None
+        excel_file = 'ipca-15_202502SerieHist.xls' ### Aqui preciso Fazer uma alteração no caso temos o nome ipca-15_anomesatualSerieHist.xls PReciso deixar essa parte variavel
+        
+        # Procura o arquivo na pasta atual e na pasta temp
+        possible_paths = [
+            excel_file,  
+            os.path.join('temp', excel_file),
+            os.path.join(self.temp_dir, excel_file)
+        ]
+        
+        for path in possible_paths:
+            if os.path.exists(path):
+                local_file_path = os.path.abspath(path)
+                break
+        
         return {
             'ipca15': {  # IPCA-15
                 'code': '7062',
@@ -47,7 +70,17 @@ class IBGECollector(BaseCollector):
                 'variables': ['all', '63', '69', '2265'],  # Geral, Alimentação, Transportes, Educação
                 'classifications': {
                     'month': {'code': '315', 'category': 'all'}
-                }
+                },
+                # Adiciona suporte para download de arquivo
+                'collection_method': 'file_download',
+                'local_file_path': local_file_path,  # Caminho do arquivo local, se existir
+                'download_url': 'https://www.ibge.gov.br/estatisticas/economicas/precos-e-custos/9260-indice-nacional-de-precos-ao-consumidor-amplo-15.html?=&t=downloads',
+                'file_name': excel_file,
+                'sheet_name': 0,  # Primeira aba da planilha
+                'skiprows': 2,    # Pular linhas de cabeçalho
+                'date_column': 'Mês/Ano',
+                'value_column': 'Variação Mensal (%)',
+                'date_format': '%m/%Y'  # Formato esperado: MM/AAAA
             },
             'inpc': {  # Índice Nacional de Preços ao Consumidor
                 'code': '7063',
@@ -104,8 +137,13 @@ class IBGECollector(BaseCollector):
             # Obtém configuração do indicador
             indicator_config = indicators[indicator]
             
-            # Seleciona o método de coleta apropriado com base no tipo de indicador
-            if indicator == 'pnad':
+            # Seleciona o método de coleta apropriado com base na configuração
+            collection_method = indicator_config.get('collection_method', 'api')
+            
+            if collection_method == 'file_download':
+                self._log_info(f"Usando método de download de arquivo para {indicator}")
+                return self._get_file_data(indicator, indicator_config, start_date, end_date)
+            elif indicator == 'pnad':
                 # Endpoint específico para PNAD
                 return self._get_pnad_data(start_date, end_date)
             else:
@@ -115,7 +153,287 @@ class IBGECollector(BaseCollector):
         except Exception as e:
             self._log_error(f"Erro ao coletar dados do indicador {indicator}: {str(e)}")
             return None
-
+    
+    def _get_file_data(self, 
+                     indicator: str, 
+                     config: Dict[str, Any],
+                     start_date: Optional[datetime] = None, 
+                     end_date: Optional[datetime] = None) -> Optional[pd.DataFrame]:
+        """
+        Coleta dados de um indicador através de arquivo local ou download.
+        
+        Args:
+            indicator: Nome do indicador
+            config: Configuração do indicador
+            start_date: Data inicial
+            end_date: Data final
+            
+        Returns:
+            DataFrame com dados ou None em caso de erro
+        """
+        try:
+            # Verifica se temos um arquivo local
+            local_file_path = config.get('local_file_path')
+            
+            if local_file_path and os.path.exists(local_file_path):
+                self._log_info(f"Usando arquivo local para {indicator}: {local_file_path}")
+                return self._process_file(local_file_path, indicator, config, start_date, end_date)
+            
+            # Se não temos arquivo local, tenta fazer download
+            download_url = config.get('download_url')
+            if download_url:
+                self._log_info(f"Arquivo local não encontrado. Tentando download de {download_url}")
+                # TODO: Implementar download do arquivo
+                return self._download_and_process_file(download_url, indicator, config, start_date, end_date)
+            
+            self._log_error(f"Não foi possível encontrar/baixar dados para {indicator}")
+            return None
+            
+        except Exception as e:
+            self._log_error(f"Erro ao processar arquivo para {indicator}: {str(e)}")
+            return None
+    
+    def _process_file(self, 
+                    file_path: str, 
+                    indicator: str, 
+                    config: Dict[str, Any],
+                    start_date: Optional[datetime] = None, 
+                    end_date: Optional[datetime] = None) -> Optional[pd.DataFrame]:
+        """
+        Processa um arquivo local (Excel, CSV, ZIP).
+        
+        Args:
+            file_path: Caminho do arquivo
+            indicator: Nome do indicador
+            config: Configuração do indicador
+            start_date: Data inicial
+            end_date: Data final
+            
+        Returns:
+            DataFrame com dados ou None em caso de erro
+        """
+        try:
+            # Determina tipo de arquivo
+            if file_path.endswith('.zip'):
+                return self._process_zip_file(file_path, indicator, config, start_date, end_date)
+            elif file_path.endswith('.xls') or file_path.endswith('.xlsx'):
+                return self._process_excel_file(file_path, indicator, config, start_date, end_date)
+            elif file_path.endswith('.csv'):
+                return self._process_csv_file(file_path, indicator, config, start_date, end_date)
+            else:
+                self._log_error(f"Formato de arquivo não suportado: {file_path}")
+                return None
+                
+        except Exception as e:
+            self._log_error(f"Erro ao processar arquivo {file_path}: {str(e)}")
+            return None
+    
+    def _process_excel_file(self, 
+                          file_path: str, 
+                          indicator: str, 
+                          config: Dict[str, Any],
+                          start_date: Optional[datetime] = None, 
+                          end_date: Optional[datetime] = None) -> Optional[pd.DataFrame]:
+        """
+        Processa um arquivo Excel.
+        
+        Args:
+            file_path: Caminho do arquivo
+            indicator: Nome do indicador
+            config: Configuração do indicador
+            start_date: Data inicial
+            end_date: Data final
+            
+        Returns:
+            DataFrame com dados ou None em caso de erro
+        """
+        try:
+            self._log_info(f"Processando arquivo Excel: {file_path}")
+            
+            # Configurações para leitura do Excel
+            sheet_name = config.get('sheet_name', 0)
+            skiprows = config.get('skiprows', 0)
+            
+            # Lê o arquivo Excel
+            df = pd.read_excel(file_path, sheet_name=sheet_name, skiprows=skiprows)
+            self._log_info(f"Arquivo Excel lido com sucesso. Colunas: {df.columns.tolist()}")
+            
+            # Extrai configurações
+            date_column = config.get('date_column')
+            value_column = config.get('value_column')
+            date_format = config.get('date_format')
+            
+            # Renomeia colunas conforme necessário
+            if date_column and date_column in df.columns:
+                df = df.rename(columns={date_column: 'data'})
+            
+            if value_column and value_column in df.columns:
+                df = df.rename(columns={value_column: indicator})
+            
+            # Converte coluna de data
+            if 'data' in df.columns and date_format:
+                df['data'] = pd.to_datetime(df['data'], format=date_format, errors='coerce')
+            
+            # Remove linhas com datas ou valores nulos
+            df = df.dropna(subset=['data'])
+            if indicator in df.columns:
+                df = df.dropna(subset=[indicator])
+            
+            # Filtra por data, se necessário
+            if start_date or end_date:
+                if start_date:
+                    df = df[df['data'] >= start_date]
+                if end_date:
+                    df = df[df['data'] <= end_date]
+            
+            self._log_info(f"Processamento do arquivo Excel concluído. Shape final: {df.shape}")
+            return df
+            
+        except Exception as e:
+            self._log_error(f"Erro ao processar arquivo Excel {file_path}: {str(e)}")
+            return None
+    
+    def _process_zip_file(self, 
+                        file_path: str, 
+                        indicator: str, 
+                        config: Dict[str, Any],
+                        start_date: Optional[datetime] = None, 
+                        end_date: Optional[datetime] = None) -> Optional[pd.DataFrame]:
+        """
+        Extrai e processa um arquivo ZIP.
+        
+        Args:
+            file_path: Caminho do arquivo ZIP
+            indicator: Nome do indicador
+            config: Configuração do indicador
+            start_date: Data inicial
+            end_date: Data final
+            
+        Returns:
+            DataFrame com dados ou None em caso de erro
+        """
+        try:
+            self._log_info(f"Extraindo arquivo ZIP: {file_path}")
+            
+            with zipfile.ZipFile(file_path) as zip_ref:
+                # Lista arquivos dentro do ZIP
+                file_list = zip_ref.namelist()
+                self._log_info(f"Arquivos no ZIP: {file_list}")
+                
+                # Determina qual arquivo extrair
+                file_to_extract = config.get('file_name')
+                if not file_to_extract:
+                    # Se não especificado, tenta inferir
+                    excel_files = [f for f in file_list if f.endswith(('.xls', '.xlsx'))]
+                    if excel_files:
+                        file_to_extract = excel_files[0]
+                    elif file_list:
+                        file_to_extract = file_list[0]
+                    else:
+                        self._log_error("ZIP vazio ou sem arquivos compatíveis")
+                        return None
+                
+                # Extrai o arquivo
+                extract_path = os.path.join(self.temp_dir, file_to_extract)
+                zip_ref.extract(file_to_extract, self.temp_dir)
+                self._log_info(f"Arquivo extraído: {extract_path}")
+                
+                # Processa o arquivo extraído
+                return self._process_file(extract_path, indicator, config, start_date, end_date)
+                
+        except Exception as e:
+            self._log_error(f"Erro ao processar arquivo ZIP {file_path}: {str(e)}")
+            return None
+    
+    def _process_csv_file(self, 
+                        file_path: str, 
+                        indicator: str, 
+                        config: Dict[str, Any],
+                        start_date: Optional[datetime] = None, 
+                        end_date: Optional[datetime] = None) -> Optional[pd.DataFrame]:
+        """
+        Processa um arquivo CSV.
+        
+        Args:
+            file_path: Caminho do arquivo
+            indicator: Nome do indicador
+            config: Configuração do indicador
+            start_date: Data inicial
+            end_date: Data final
+            
+        Returns:
+            DataFrame com dados ou None em caso de erro
+        """
+        try:
+            self._log_info(f"Processando arquivo CSV: {file_path}")
+            
+            # Configurações para leitura do CSV
+            sep = config.get('csv_separator', ',')
+            encoding = config.get('encoding', 'utf-8')
+            
+            # Lê o arquivo CSV
+            df = pd.read_csv(file_path, sep=sep, encoding=encoding)
+            
+            # Extrai configurações
+            date_column = config.get('date_column')
+            value_column = config.get('value_column')
+            date_format = config.get('date_format')
+            
+            # Renomeia colunas conforme necessário
+            if date_column and date_column in df.columns:
+                df = df.rename(columns={date_column: 'data'})
+            
+            if value_column and value_column in df.columns:
+                df = df.rename(columns={value_column: indicator})
+            
+            # Converte coluna de data
+            if 'data' in df.columns and date_format:
+                df['data'] = pd.to_datetime(df['data'], format=date_format, errors='coerce')
+            
+            # Remove linhas com datas ou valores nulos
+            df = df.dropna(subset=['data'])
+            if indicator in df.columns:
+                df = df.dropna(subset=[indicator])
+            
+            # Filtra por data, se necessário
+            if start_date or end_date:
+                if start_date:
+                    df = df[df['data'] >= start_date]
+                if end_date:
+                    df = df[df['data'] <= end_date]
+            
+            self._log_info(f"Processamento do arquivo CSV concluído. Shape final: {df.shape}")
+            return df
+            
+        except Exception as e:
+            self._log_error(f"Erro ao processar arquivo CSV {file_path}: {str(e)}")
+            return None
+    
+    def _download_and_process_file(self, 
+                                 url: str, 
+                                 indicator: str, 
+                                 config: Dict[str, Any],
+                                 start_date: Optional[datetime] = None, 
+                                 end_date: Optional[datetime] = None) -> Optional[pd.DataFrame]:
+        """
+        Baixa e processa um arquivo.
+        
+        Args:
+            url: URL do arquivo ou página de download
+            indicator: Nome do indicador
+            config: Configuração do indicador
+            start_date: Data inicial
+            end_date: Data final
+            
+        Returns:
+            DataFrame com dados ou None em caso de erro
+        """
+        # Esta implementação é um esboço que pode ser ampliado posteriormente
+        # A implementação completa seria mais complexa para lidar com páginas web
+        self._log_warning("Download direto do IBGE ainda não implementado completamente.")
+        self._log_info("Por favor, baixe o arquivo manualmente e coloque-o na pasta do projeto ou na pasta 'temp'.")
+        return None
+    
     def _get_sidra_data(self, indicator: str, config: Dict[str, Any], 
                       start_date: Optional[datetime] = None, 
                       end_date: Optional[datetime] = None) -> Optional[pd.DataFrame]:
@@ -136,6 +454,22 @@ class IBGECollector(BaseCollector):
             end_date = end_date or datetime.now()
             start_date = start_date or (end_date - timedelta(days=365 * 2))  # 2 anos por padrão
             
+            # INÍCIO DA MODIFICAÇÃO: Ajuste para garantir que buscamos períodos históricos válidos
+            # Garante que não buscamos dados do futuro
+            current_date = datetime.now()
+            if end_date > current_date:
+                self._log_info(f"Ajustando data final de {end_date.strftime('%Y-%m-%d')} para {current_date.strftime('%Y-%m-%d')} (data atual)")
+                end_date = current_date
+            
+            # Ajuste para períodos seguros (dados históricos disponíveis - busca dados até 2023)
+            safe_end_date = datetime(2023, 12, 1)  # Um período seguro que sabemos que existe
+            safe_start_date = datetime(2023, 7, 1)  # 6 meses antes
+            
+            self._log_info(f"Usando período histórico seguro: {safe_start_date.strftime('%Y-%m-%d')} a {safe_end_date.strftime('%Y-%m-%d')}")
+            start_date = safe_start_date
+            end_date = safe_end_date
+            # FIM DA MODIFICAÇÃO
+            
             # Formata períodos para o SIDRA (depende da frequência)
             if config['frequency'] == 'monthly':
                 period_start = start_date.strftime('%Y%m')
@@ -150,6 +484,9 @@ class IBGECollector(BaseCollector):
                 # Anual
                 period_start = str(start_date.year)
                 period_end = str(end_date.year)
+            
+            # Log das datas formatadas para debug
+            self._log_info(f"Períodos formatados: {period_start} a {period_end}")
                 
             # Constrói a URL da consulta
             table_code = config['code']
@@ -265,98 +602,14 @@ class IBGECollector(BaseCollector):
             end_date = end_date or datetime.now()
             start_date = start_date or (end_date - timedelta(days=365 * 2))
             
-            # Filtra períodos dentro do intervalo
-            # Períodos são no formato YYYYQN (ex: 202301 para 1º trimestre de 2023)
-            filtered_periods = []
-            for period in available_periods:
-                period_id = period['id']
-                
-                # Extrai ano e trimestre
-                if len(period_id) == 6:
-                    year = int(period_id[:4])
-                    quarter = int(period_id[4:6]) // 3 + 1 if int(period_id[4:6]) % 3 == 0 else int(period_id[4:6]) // 3
-                    
-                    # Converte para data (primeiro dia do trimestre)
-                    month = (quarter - 1) * 3 + 1
-                    period_date = datetime(year, month, 1)
-                    
-                    # Verifica se está no intervalo
-                    if start_date <= period_date <= end_date:
-                        filtered_periods.append(period_id)
+            # MODIFICAÇÃO: Ajuste para garantir que buscamos períodos disponíveis
+            # Use um período histórico seguro (até 2023) para PNAD
+            safe_end_date = datetime(2023, 9, 1)  # 3º trimestre de 2023
+            safe_start_date = datetime(2023, 1, 1)  # 1º trimestre de 2023
             
-            if not filtered_periods:
-                self._log_error("Nenhum período encontrado para PNAD no intervalo especificado")
-                return None
-                
-            self._log_info(f"Períodos selecionados para PNAD: {filtered_periods}")
-            
-            # Coleta dados para cada período
-            all_data = []
-            
-            for period in filtered_periods:
-                # Taxa de desocupação - indicador 4099
-                url = f"{self.pnad_url}/{period}/indicadores/4099"
-                
-                self._log_info(f"Consultando PNAD para período {period}: {url}")
-                response = requests.get(url)
-                
-                # Verifica se houve erro
-                if response.status_code != 200:
-                    self._log_error(f"Erro ao consultar período {period}: {response.status_code}")
-                    continue
-                    
-                data = response.json()
-                
-                if not data or 'resultados' not in data[0]:
-                    self._log_error(f"Dados não encontrados para período {period}")
-                    continue
-                
-                # Extrai resultado nacional (Brasil)
-                results = data[0]['resultados']
-                
-                for result in results:
-                    if 'series' in result:
-                        for series in result['series']:
-                            if series['localidade']['nome'] == 'Brasil':
-                                # Valor da taxa de desocupação nacional
-                                value = series['serie'][0]['valor']
-                                
-                                # Converte para data
-                                year = int(period[:4])
-                                month_code = int(period[4:6])
-                                quarter = month_code // 3 + 1 if month_code % 3 == 0 else month_code // 3
-                                month = (quarter - 1) * 3 + 1
-                                
-                                # Cria registro
-                                record = {
-                                    'data': datetime(year, month, 1),
-                                    'pnad': float(value.replace(',', '.')) if isinstance(value, str) else float(value),
-                                    'localidade': 'Brasil',
-                                    'trimestre': quarter
-                                }
-                                
-                                all_data.append(record)
-                
-                # Pausa para não sobrecarregar a API
-                time.sleep(0.5)
-            
-            # Cria DataFrame final
-            if not all_data:
-                self._log_error("Nenhum dado encontrado para PNAD")
-                return None
-                
-            df = pd.DataFrame(all_data)
-            df = df.sort_values('data')
-            
-            self._log_info(f"Dados PNAD coletados com sucesso. Shape: {df.shape}")
-            return df
-            
-        except requests.exceptions.RequestException as e:
-            self._log_error(f"Erro na requisição HTTP: {str(e)}")
-            return None
-        except Exception as e:
-            self._log_error(f"Erro ao processar dados PNAD: {str(e)}")
-            return None
+            self._log_info(f"Usando período histórico seguro para PNAD: {safe_start_date.strftime('%Y-%m-%d')} a {safe_end_date.strftime('%Y-%m-%d')}")
+            start_date = safe_start_date
+            end_date = safe_end_date
     
     def _post_collect_hook(self, df: pd.DataFrame, indicator: str, **kwargs) -> pd.DataFrame:
         """

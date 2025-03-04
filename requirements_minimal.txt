@@ -1,0 +1,20 @@
+# Core dependencies
+pandas==2.1.0
+numpy==1.24.3
+requests==2.31.0
+python-dotenv==1.0.0
+boto3==1.28.44
+pyarrow==13.0.0  # Versão mais compatível
+
+# Spark dependencies - comentado inicialmente para teste básico
+# pyspark==3.4.1
+# delta-spark==2.4.0
+
+# Testing
+pytest==7.4.2
+pytest-mock==3.11.1
+moto==4.2.0  # Para mock de serviços AWS
+
+# AWS specific - simplificado
+boto3-stubs[s3,glue,stepfunctions,lambda]==1.28.44
+# aws-sam-cli==1.95.0  # Remova este por enquanto
