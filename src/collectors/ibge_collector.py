@@ -7,7 +7,9 @@ from typing import Dict, List, Optional, Union, Any
 import time
 import os
 import zipfile
+import re
 from io import BytesIO
+import logging
 
 from .base_collector import BaseCollector
 
@@ -45,21 +47,11 @@ class IBGECollector(BaseCollector):
         Returns:
             Dict: Mapeamento de indicadores para suas configurações
         """
-        # Verifica se existe o arquivo local para o IPCA-15
-        local_file_path = None
-        excel_file = 'ipca-15_202502SerieHist.xls' ### Aqui preciso Fazer uma alteração no caso temos o nome ipca-15_anomesatualSerieHist.xls PReciso deixar essa parte variavel
+        # Determina o nome dinâmico do arquivo para o IPCA-15
+        excel_file = self._get_ipca15_filename()
         
         # Procura o arquivo na pasta atual e na pasta temp
-        possible_paths = [
-            excel_file,  
-            os.path.join('temp', excel_file),
-            os.path.join(self.temp_dir, excel_file)
-        ]
-        
-        for path in possible_paths:
-            if os.path.exists(path):
-                local_file_path = os.path.abspath(path)
-                break
+        local_file_path = self._find_local_file(excel_file)
         
         return {
             'ipca15': {  # IPCA-15
@@ -110,6 +102,80 @@ class IBGECollector(BaseCollector):
                 }
             }
         }
+    
+    def _get_ipca15_filename(self) -> str:
+        """
+        Gera o nome dinâmico do arquivo do IPCA-15 com base na data atual.
+        
+        Returns:
+            str: Nome do arquivo no formato 'ipca-15_YYYYMM_SerieHist.xls'
+        """
+        # Obtém data atual
+        current_date = datetime.now()
+        
+        # Cria o nome do arquivo com base no ano e mês atual
+        excel_file = f'ipca-15_{current_date.year}{current_date.month:02d}SerieHist.xls'
+        
+        # Caso o arquivo do mês atual não esteja disponível, tenta o mês anterior
+        # Isto é uma medida de fallback, já que o IBGE pode atrasar a publicação
+        if not self._is_file_available(excel_file):
+            previous_date = current_date - timedelta(days=30)
+            excel_file = f'ipca-15_{previous_date.year}{previous_date.month:02d}SerieHist.xls'
+        
+        self._log_info(f"Nome de arquivo IPCA-15 gerado: {excel_file}")
+        return excel_file
+    
+    def _is_file_available(self, file_name: str) -> bool:
+        """
+        Verifica se um arquivo está disponível localmente.
+        
+        Args:
+            file_name: Nome do arquivo a ser verificado
+            
+        Returns:
+            bool: True se o arquivo existir
+        """
+        possible_paths = [
+            file_name,  
+            os.path.join('temp', file_name),
+            os.path.join(self.temp_dir, file_name)
+        ]
+        
+        for path in possible_paths:
+            if os.path.exists(path):
+                return True
+                
+        return False
+    
+    def _find_local_file(self, file_name: str) -> Optional[str]:
+        """
+        Encontra um arquivo local pelo nome.
+        
+        Args:
+            file_name: Nome do arquivo a ser encontrado
+            
+        Returns:
+            Optional[str]: Caminho absoluto se encontrado, None caso contrário
+        """
+        possible_paths = [
+            file_name,  
+            os.path.join('temp', file_name),
+            os.path.join(self.temp_dir, file_name)
+        ]
+        
+        for path in possible_paths:
+            if os.path.exists(path):
+                return os.path.abspath(path)
+                
+        # Se não encontrou o arquivo específico, tenta encontrar qualquer arquivo IPCA-15
+        pattern = r'ipca-15_\d{6}SerieHist\.xls'
+        
+        for root, _, files in os.walk(os.getcwd()):
+            for file in files:
+                if re.match(pattern, file):
+                    return os.path.abspath(os.path.join(root, file))
+                    
+        return None
     
     def get_series_data(self, 
                        indicator: str,
@@ -183,7 +249,6 @@ class IBGECollector(BaseCollector):
             download_url = config.get('download_url')
             if download_url:
                 self._log_info(f"Arquivo local não encontrado. Tentando download de {download_url}")
-                # TODO: Implementar download do arquivo
                 return self._download_and_process_file(download_url, indicator, config, start_date, end_date)
             
             self._log_error(f"Não foi possível encontrar/baixar dados para {indicator}")
@@ -428,11 +493,37 @@ class IBGECollector(BaseCollector):
         Returns:
             DataFrame com dados ou None em caso de erro
         """
-        # Esta implementação é um esboço que pode ser ampliado posteriormente
-        # A implementação completa seria mais complexa para lidar com páginas web
-        self._log_warning("Download direto do IBGE ainda não implementado completamente.")
-        self._log_info("Por favor, baixe o arquivo manualmente e coloque-o na pasta do projeto ou na pasta 'temp'.")
-        return None
+        try:
+            # Verifica se é uma URL direta para arquivo ou uma página web
+            if url.lower().endswith(('.xls', '.xlsx', '.csv', '.zip')):
+                # URL direta para arquivo
+                self._log_info(f"Baixando arquivo direto de {url}")
+                
+                response = requests.get(url, timeout=30)
+                if response.status_code != 200:
+                    self._log_error(f"Falha ao baixar arquivo. Status code: {response.status_code}")
+                    return None
+                
+                # Salva o arquivo temporariamente
+                file_name = url.split('/')[-1]
+                temp_file_path = os.path.join(self.temp_dir, file_name)
+                
+                with open(temp_file_path, 'wb') as f:
+                    f.write(response.content)
+                
+                self._log_info(f"Arquivo salvo temporariamente em {temp_file_path}")
+                
+                # Processa o arquivo baixado
+                return self._process_file(temp_file_path, indicator, config, start_date, end_date)
+            else:
+                # Página web - mais complexo, precisa de scraping
+                self._log_warning("Download de página web do IBGE ainda não implementado completamente.")
+                self._log_info("Por favor, baixe o arquivo manualmente e coloque-o na pasta do projeto ou na pasta 'temp'.")
+                return None
+                
+        except Exception as e:
+            self._log_error(f"Erro ao baixar e processar arquivo: {str(e)}")
+            return None
     
     def _get_sidra_data(self, indicator: str, config: Dict[str, Any], 
                       start_date: Optional[datetime] = None, 
@@ -454,7 +545,7 @@ class IBGECollector(BaseCollector):
             end_date = end_date or datetime.now()
             start_date = start_date or (end_date - timedelta(days=365 * 2))  # 2 anos por padrão
             
-            # INÍCIO DA MODIFICAÇÃO: Ajuste para garantir que buscamos períodos históricos válidos
+            # Ajuste para garantir que buscamos períodos históricos válidos
             # Garante que não buscamos dados do futuro
             current_date = datetime.now()
             if end_date > current_date:
@@ -468,7 +559,6 @@ class IBGECollector(BaseCollector):
             self._log_info(f"Usando período histórico seguro: {safe_start_date.strftime('%Y-%m-%d')} a {safe_end_date.strftime('%Y-%m-%d')}")
             start_date = safe_start_date
             end_date = safe_end_date
-            # FIM DA MODIFICAÇÃO
             
             # Formata períodos para o SIDRA (depende da frequência)
             if config['frequency'] == 'monthly':
@@ -504,7 +594,7 @@ class IBGECollector(BaseCollector):
             self._log_info(f"Consultando API SIDRA: {url}")
             
             # Faz a requisição
-            response = requests.get(url)
+            response = requests.get(url, timeout=30)
             response.raise_for_status()
             
             # Processa a resposta
@@ -593,7 +683,7 @@ class IBGECollector(BaseCollector):
             # Endpoint para listar os períodos disponíveis
             self._log_info("Consultando períodos disponíveis da PNAD")
             periods_url = f"{self.pnad_url}"
-            periods_response = requests.get(periods_url)
+            periods_response = requests.get(periods_url, timeout=30)
             periods_response.raise_for_status()
             
             available_periods = periods_response.json()
@@ -602,7 +692,7 @@ class IBGECollector(BaseCollector):
             end_date = end_date or datetime.now()
             start_date = start_date or (end_date - timedelta(days=365 * 2))
             
-            # MODIFICAÇÃO: Ajuste para garantir que buscamos períodos disponíveis
+            # Ajuste para garantir que buscamos períodos disponíveis
             # Use um período histórico seguro (até 2023) para PNAD
             safe_end_date = datetime(2023, 9, 1)  # 3º trimestre de 2023
             safe_start_date = datetime(2023, 1, 1)  # 1º trimestre de 2023
@@ -610,6 +700,88 @@ class IBGECollector(BaseCollector):
             self._log_info(f"Usando período histórico seguro para PNAD: {safe_start_date.strftime('%Y-%m-%d')} a {safe_end_date.strftime('%Y-%m-%d')}")
             start_date = safe_start_date
             end_date = safe_end_date
+            
+            # Formata as datas para os períodos PNAD (formato YYYYQT)
+            start_quarter = (start_date.month - 1) // 3 + 1
+            end_quarter = (end_date.month - 1) // 3 + 1
+            
+            start_period = f"{start_date.year}{start_quarter}"
+            end_period = f"{end_date.year}{end_quarter}"
+            
+            # Filtra os períodos disponíveis dentro do intervalo
+            periods_to_fetch = []
+            for period in available_periods:
+                period_id = period['id']
+                if (period_id >= start_period) and (period_id <= end_period):
+                    periods_to_fetch.append(period_id)
+            
+            if not periods_to_fetch:
+                self._log_error("Nenhum período encontrado no intervalo especificado")
+                return None
+                
+            self._log_info(f"Períodos a coletar: {periods_to_fetch}")
+            
+            # Coleta dados para cada período
+            all_data = []
+            
+            for period in periods_to_fetch:
+                try:
+                    # Endpoint da PNAD para um período específico
+                    indicators_url = f"{self.pnad_url}/{period}/indicadores"
+                    response = requests.get(indicators_url, timeout=30)
+                    response.raise_for_status()
+                    
+                    indicators = response.json()
+                    
+                    # Procura o indicador de desemprego (taxa de desocupação)
+                    unemployment_data = None
+                    for indicator in indicators:
+                        if "desocupa" in indicator['nome'].lower():
+                            unemployment_data = indicator
+                            break
+                    
+                    if not unemployment_data:
+                        self._log_warning(f"Indicador de desemprego não encontrado para o período {period}")
+                        continue
+                    
+                    # Extrai a taxa de desemprego
+                    unemploy_rate = unemployment_data['valoresDeReferencia'][0]['valor']
+                    
+                    # Converte período para data
+                    year = int(period[:4])
+                    quarter = int(period[4:])
+                    month = (quarter - 1) * 3 + 1  # Primeiro mês do trimestre
+                    quarter_date = datetime(year, month, 1)
+                    
+                    # Adiciona à lista
+                    all_data.append({
+                        'data': quarter_date,
+                        'pnad': unemploy_rate,
+                        'period_id': period
+                    })
+                    
+                except Exception as e:
+                    self._log_error(f"Erro ao processar período {period}: {str(e)}")
+            
+            # Converte para DataFrame
+            if not all_data:
+                self._log_error("Nenhum dado de PNAD coletado")
+                return None
+                
+            df = pd.DataFrame(all_data)
+            
+            # Ordena por data
+            df = df.sort_values('data')
+            
+            self._log_info(f"Dados da PNAD coletados com sucesso. Shape: {df.shape}")
+            return df
+            
+        except requests.exceptions.RequestException as e:
+            self._log_error(f"Erro na requisição HTTP para PNAD: {str(e)}")
+            return None
+        except Exception as e:
+            self._log_error(f"Erro ao processar dados da PNAD: {str(e)}")
+            return None
     
     def _post_collect_hook(self, df: pd.DataFrame, indicator: str, **kwargs) -> pd.DataFrame:
         """
